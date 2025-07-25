@@ -13,7 +13,8 @@ namespace robot_controller {
 
 // Initialize the controller
 bool WheelfootController::init(hardware_interface::RobotHW *robot_hw, ros::NodeHandle &nh) {
-  wheel_stand_pos_.resize(8+6);
+  wheel_stand_pos_.resize(8 + 6);
+  stopSitPos_.setZero(8 + 6);
   wheel_stand_pos_<<  0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                       1.36,-1.36, //knee_L, knee_R
                       0.0, 0.0, 0.0, 0.0, 0.0;
@@ -24,9 +25,9 @@ bool WheelfootController::init(hardware_interface::RobotHW *robot_hw, ros::NodeH
   ee_init_pos_ << 0.346+0.1, 0, 0.241;
   ee_init_rpy_ << -M_PI/2, 0, -M_PI/2;
 
-  ee_init_ori_<<   0,  0,  1,
-                  -1,  0,  0,
-                    0, -1,  0;
+  // ee_init_ori_<<   0,  0,  1,
+  //                 -1,  0,  0,
+  //                   0, -1,  0;
 
   gripper_cmd_pub_ = nh_.advertise<std_msgs::Bool>("/gripper_cmd", false, 10);
 
@@ -43,9 +44,11 @@ void WheelfootController::starting(const ros::Time &time) {
     ROS_INFO_STREAM("starting hybridJointHandle: " << hybridJointHandles_[i].getPosition());
     defaultJointAngles_[i] = hybridJointHandles_[i].getPosition();
   }
-
+  stopSitPos_ << 0.0, 0.3, -0.3, 0.0, 0.0, 0.0, 0.0,
+                1.35, -1.35, 0.0, 0.0, 0.0, 0.0, 0.0;
   scalar_t durationSecs = 1.5;
   standDuration_ = durationSecs * 1000.0;
+  stopCenterDuration_ = durationSecs * 750.0;
   standPercent_ = 0.0;
   loopCount_ = 0;
   work_mode_flag_ = 10;
@@ -61,6 +64,9 @@ void WheelfootController::update(const ros::Time &time, const ros::Duration &per
     break;
   case Mode::WHEEL_WALK:
     handleRLWheelMoveMode();
+    break;
+  case Mode::WHEEL_STOP:
+    handleWheelStopMode();
     break;
   }
   loopCount_++;
@@ -101,6 +107,38 @@ void WheelfootController::handleWheelStandMode()
       is_arm_stand = true;
       mode_ = Mode::WHEEL_WALK;
     }
+  }
+}
+
+void WheelfootController::handleWheelStopMode() {
+  if (!stopJointAnglesUpdated_) {
+    for (size_t i = 0; i < hybridJointHandles_.size(); i++) {
+      ROS_INFO_STREAM("updating stop hybridJointHandle: " << hybridJointHandles_[i].getPosition());
+      defaultJointAngles_[i] = hybridJointHandles_[i].getPosition();
+    }
+    stopJointAnglesUpdated_ = true;
+  }
+  if (stopCenterPercent_ < 1)
+  {
+    for (int j = 0; j < hybridJointHandles_.size(); j++)
+    {
+      if (j==12||j==13) {// wheel
+        hybridJointHandles_[j].setCommand(0, 0, 0, 1, 0, 0);
+      }
+      else if(j==0||j==3||j==6){ // arm j123
+        scalar_t pos_des = defaultJointAngles_[j] * (1 - stopCenterPercent_) + stopSitPos_[j] * stopCenterPercent_;
+        hybridJointHandles_[j].setCommand(pos_des, 0, 20, 1, 0, 0);
+      }
+      else if(j==9||j==10||j==11){ // arm j456
+        scalar_t pos_des = defaultJointAngles_[j] * (1 - stopCenterPercent_) + stopSitPos_[j] * stopCenterPercent_;
+        hybridJointHandles_[j].setCommand(pos_des, 0, 10, 1, 0, 0);
+      }
+      else{ // base exclude wheel
+        scalar_t pos_des = defaultJointAngles_[j] * (1 - stopCenterPercent_) + stopSitPos_[j] * stopCenterPercent_;
+        hybridJointHandles_[j].setCommand(pos_des, 0, 50, 6, 0, 0);
+      }
+    }
+    stopCenterPercent_ += 1 / stopCenterDuration_;
   }
 }
 
@@ -161,6 +199,8 @@ void WheelfootController::handleRLWheelMoveMode()
     }
     // arm j123
     else if(i==0||i==3||i==6){
+      // increase damping if arm is still
+      float factor_kpkd = armHoldStill_ ? 2.0 : 1.0;
       scalar_t actionMin =
           jointPos(i) - initJointAngles_(i, 0) +
           ( wheelRobotCfg_.controlCfg.arm_j123_damping* jointVel(i) - wheelRobotCfg_.controlCfg.arm_j123_torque_limit) / wheelRobotCfg_.controlCfg.arm_j123_stiffness;
@@ -172,8 +212,8 @@ void WheelfootController::handleRLWheelMoveMode()
                               std::min(actionMax / wheelRobotCfg_.controlCfg.action_scale_pos, (scalar_t)actions_[i]));
       scalar_t pos_des = actions_[i] * wheelRobotCfg_.controlCfg.action_scale_pos + initJointAngles_(i, 0);
 
-      hybridJointHandles_[i].setCommand(pos_des, 0, wheelRobotCfg_.controlCfg.arm_j123_stiffness, wheelRobotCfg_.controlCfg.arm_j123_damping,
-                                          0, 2);
+      hybridJointHandles_[i].setCommand(pos_des, 0, wheelRobotCfg_.controlCfg.arm_j123_stiffness / factor_kpkd, 
+        wheelRobotCfg_.controlCfg.arm_j123_damping * factor_kpkd, 0, 2);
       lastActions_(i, 0) = actions_[i];
 
       // debug
@@ -470,6 +510,7 @@ bool WheelfootController::loadRLCfg() {
     commands_.setZero();
     commandsStand_.setZero();
     commandsMove_.setZero();
+    commandsMove_(3) = 0.75;
   } catch (const std::exception &e) {
     // Error handling.
     ROS_ERROR("Error in the LeggedRobotCfg: %s", e.what());
@@ -612,6 +653,15 @@ void WheelfootController::computeObservation() {
             ee_init_rpy_[1] + rc_ee_cmd.ee_rpy[2], 
             ee_init_rpy_[2] + rc_ee_cmd.ee_rpy[0];
 
+  // if ee_pos change is lower than 0.03 and ee_rpy change is lower than 0.01, regard as still
+  if ((ee_pos - lastEePos_).norm() < 0.03 && (ee_rpy - lastEeRpy_).norm() < 0.01) {
+    armHoldStill_ = true;
+  }
+  else {
+    armHoldStill_ = false;
+  }
+  lastEePos_ = ee_pos;
+  lastEeRpy_ = ee_rpy;
   ee_quat = getQuaternionFromRpy(ee_rpy);
   if(ee_quat.w() < 0){
     ee_quat_vec << -ee_quat.w(), -ee_quat.x(), -ee_quat.y(), -ee_quat.z();
@@ -739,7 +789,7 @@ void WheelfootController::cmdVelCallback(const geometry_msgs::TwistConstPtr &msg
   double command_y = (msg->linear.y > 1.0) ? 1.0 : (msg->linear.y < -1.0 ? -1.0 : msg->linear.y);
   double command_yaw = (msg->angular.z > 1.0) ? 1.0 : (msg->angular.z < -1.0 ? -1.0 : msg->angular.z);
   double command_z = (msg->linear.z > 1.0) ? 1.0 : (msg->linear.z < -1.0 ? -1.0 : msg->linear.z);
-  if (mode_ == Mode::WHEEL_WALK && (policy_path_ == "policy_pre_stand" || policy_path_ == "policy_stand"))
+  if (mode_ == Mode::WHEEL_WALK)
   {
     commandsStand_(0) = 0.0;
     commandsStand_(1) = 0.0;
@@ -771,6 +821,9 @@ void WheelfootController::cmdVelCallback(const geometry_msgs::TwistConstPtr &msg
 
 void WheelfootController::EEPoseCmdRCCallback(const std_msgs::Float32MultiArrayConstPtr &msg)
 {
+  if (msg->data.size() == 8 && msg->data[7] == -1) {
+    mode_ = Mode::WHEEL_STOP;
+  }
   ee_pos_cmd_rc_delta_msg_ = *msg;
 
   // prevent ee offset in standing up
@@ -779,6 +832,10 @@ void WheelfootController::EEPoseCmdRCCallback(const std_msgs::Float32MultiArrayC
     rc_ee_cmd.ee_position[0] += msg->data[0];
     rc_ee_cmd.ee_position[1] += msg->data[1];
     rc_ee_cmd.ee_position[2] += msg->data[2];
+
+    rc_ee_cmd.ee_position[0] = std::min(0.6-ee_init_pos_[0], std::max(0.0-ee_init_pos_[0], rc_ee_cmd.ee_position[0]));
+    rc_ee_cmd.ee_position[1] = std::min(0.5-ee_init_pos_[1], std::max(-0.5-ee_init_pos_[1], rc_ee_cmd.ee_position[1]));
+    rc_ee_cmd.ee_position[2] = std::min(0.5-ee_init_pos_[2], std::max(-0.3-ee_init_pos_[2], rc_ee_cmd.ee_position[2]));
 
     rc_ee_cmd.ee_rpy[0] += msg->data[3];
     rc_ee_cmd.ee_rpy[1] += msg->data[4];

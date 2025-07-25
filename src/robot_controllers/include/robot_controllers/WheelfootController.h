@@ -24,7 +24,8 @@ public:
   // Enumeration for controller modes
   enum class Mode : uint8_t {
     WHEEL_STAND, 
-    WHEEL_WALK, 
+    WHEEL_WALK,
+    WHEEL_STOP 
   };
 
   // Initialize the controller
@@ -54,6 +55,7 @@ protected:
 
   // Handle walk mode
   void handleWheelStandMode() override;
+  void handleWheelStopMode();
   void handleRLWheelMoveMode() override;
 
   // Callback function for command velocity
@@ -137,7 +139,13 @@ private:
   std::string policy_path_{"policy"};
 
   Eigen::Matrix<double, 14, 1> wheel_stand_pos_;
+  vector_t stopSitPos_;
   bool policy_move_damping_mode_{false};
+  bool armHoldStill_{false};
+  bool stopJointAnglesUpdated_{false};
+  vector3_t commandStairs_, commandScalerStairs_;
+  vector3_t lastEePos_, lastEeRpy_;
+  float stopCenterPercent_{0.0}, stopCenterDuration_{0.0};
 };
 
 } // namespace robot_controller

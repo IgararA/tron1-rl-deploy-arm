@@ -294,7 +294,7 @@ bool PointfootHW::init(ros::NodeHandle& root_nh, ros::NodeHandle& robot_hw_nh) {
     // preparing stop
     if (prepare_stop_) {
       prepare_stop_count_++;
-      if (prepare_stop_count_ > 320){
+      if (prepare_stop_count_ > 800){
         ROS_FATAL("stopping controller finished!"); // ROS_FATAL
         // Creating a message to switch controllers
         controller_manager_msgs::SwitchController sw;

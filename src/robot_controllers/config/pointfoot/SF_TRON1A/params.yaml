@@ -95,8 +95,8 @@ PointfootCfg:
       height_measurements: 5.0
 
   user_cmd_scales:
-    lin_vel_x: 3.0
-    lin_vel_y: 2.0
+    lin_vel_x: 1.5
+    lin_vel_y: 1.5
     ang_vel_yaw: 1.2
 
   size:

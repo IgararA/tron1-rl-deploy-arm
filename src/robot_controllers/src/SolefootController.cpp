@@ -533,20 +533,20 @@ void SolefootController::computeObservation() {
 
   scaledCommandsSole_[0] = sliding_window(commandX_, windowLen_);
   scaledCommandsSole_[1] = sliding_window(commandY_, windowLen_);
-  scaledCommandsSole_[2] = sliding_window(commandYaw_, windowLen_);
+  scaledCommandsSole_[2] = sliding_window(commandYaw_, windowLen_ / 5);
 
-  if(locomotionFlag_ == 0 && (std::abs(scaledCommandsSole_[0]) < 0.05 && std::abs(scaledCommandsSole_[1]) < 0.05 && std::abs(scaledCommandsSole_[2]) < 0.05)){
-    standStillFlag_ = 1;
-  }
-  if(sitDownFlag_ == 0){
-    if(locomotionFlag_ == 1 || (std::abs(scaledCommandsSole_[0]) >= 0.05 || std::abs(scaledCommandsSole_[1]) >= 0.05 || std::abs(scaledCommandsSole_[2]) >= 0.05)){
-      standStillFlag_ = 0;
-    }
-  }else{
-    standStillFlag_ = 1;
-  }
+  // if(locomotionFlag_ == 0 && (std::abs(scaledCommandsSole_[0]) < 0.05 && std::abs(scaledCommandsSole_[1]) < 0.05 && std::abs(scaledCommandsSole_[2]) < 0.05)){
+  //   standStillFlag_ = 1;
+  // }
+  // if(sitDownFlag_ == 0){
+  //   if(locomotionFlag_ == 1 || (std::abs(scaledCommandsSole_[0]) >= 0.05 || std::abs(scaledCommandsSole_[1]) >= 0.05 || std::abs(scaledCommandsSole_[2]) >= 0.05)){
+  //     standStillFlag_ = 0;
+  //   }
+  // }else{
+  //   standStillFlag_ = 1;
+  // }
 
-  handleExtraCommands();
+  // handleExtraCommands();
 
   double modifiedAngularVelocityZ = imuSensorHandles_.getAngularVelocity()[2];
   if(std::abs(scaledCommandsSole_[2]) < 0.1 && std::abs(modifiedAngularVelocityZ) <= 0.4){
@@ -616,7 +616,7 @@ void SolefootController::computeObservation() {
 
   obs <<  baseAngVel,
           projectedGravity,
-          vel_commands,
+          scaledCommandsSole_.head(3),// vel_commands,
           ee_pos,
           ee_mat_vec,
           base_height_cmd,
@@ -759,15 +759,15 @@ void SolefootController::clearData(){
   basePosition_.setZero();
 }
 
-void SolefootController::handleExtraCommands(){
-  scaledCommandsSole_[3] = static_cast<tensor_element_t>(extraCommands_(0));
-  if(standStillFlag_ == 1){
-    scaledCommandsSole_[4] = static_cast<tensor_element_t>(1);
-    scaledCommandsSole_.head(3).setZero();
-  } else {
-    scaledCommandsSole_[4] = static_cast<tensor_element_t>(0);
-  }
-}
+// void SolefootController::handleExtraCommands(){
+//   scaledCommandsSole_[3] = static_cast<tensor_element_t>(extraCommands_(0));
+//   if(standStillFlag_ == 1){
+//     scaledCommandsSole_[4] = static_cast<tensor_element_t>(1);
+//     scaledCommandsSole_.head(3).setZero();
+//   } else {
+//     scaledCommandsSole_[4] = static_cast<tensor_element_t>(0);
+//   }
+// }
 
 vector_t SolefootController::handleGaitCommand(){
   vector_t gait(4);// 4
@@ -783,7 +783,7 @@ vector_t SolefootController::handleGaitPhase(vector_t &gait){
   {
     gaitIndex_ = 0.0;
   }
-  if(commands_.norm() < 0.01){
+  if(scaledCommandsSole_.head(3).norm() < 0.01){
     gaitIndex_ = 0.0;
   }
 
